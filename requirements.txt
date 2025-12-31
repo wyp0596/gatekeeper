@@ -1,0 +1,22 @@
+# Gatekeeper - 车牌检测与追踪系统
+# 依赖包列表
+
+# 深度学习和计算机视觉
+ultralytics>=8.0.0          # YOLOv8
+opencv-python>=4.8.0        # OpenCV
+numpy>=1.24.0               # NumPy
+
+# 配置管理
+pyyaml>=6.0                 # YAML配置文件支持
+
+# 追踪算法 (已包含在项目中的sort目录)
+# filterpy>=1.4.5           # Kalman滤波器 (SORT依赖)
+# scikit-image>=0.19.0      # 图像处理 (SORT依赖)
+# scipy>=1.9.0              # 科学计算 (SORT依赖)
+
+# 开发依赖 (可选)
+# pytest>=7.0.0             # 测试框架
+# black>=23.0.0             # 代码格式化
+# flake8>=6.0.0             # 代码检查
+# mypy>=1.0.0               # 类型检查
+

@@ -1,0 +1,43 @@
+# Gatekeeper 配置文件示例
+
+# 检测配置
+detection:
+  model_path: "license_plate_detector.pt"
+  confidence_threshold: 0.5
+
+# 追踪配置
+tracking:
+  max_age: 30
+  min_hits: 3
+  iou_threshold: 0.3
+
+# 视频流配置
+stream:
+  # RTSP流URL或视频文件路径
+  # 示例:
+  # - RTSP: "rtsp://admin:admin@192.168.6.136:554/11"
+  # - 视频文件: "25fps_smaller.mp4"
+  # - 图片文件: "K77RsKINcX.jpg"
+  rtsp_url: "25fps_smaller.mp4"
+  
+  # 帧采样间隔 (每N帧处理一次)
+  frame_skip: 10
+  
+  # 是否显示窗口
+  display: true
+  
+  # 显示窗口名称
+  display_window_name: "License Plate Tracking"
+
+# 存储配置
+storage:
+  output_dir: "detected_plates"
+  save_format: "jpg"
+  filename_template: "plate_track{track_id:04d}_{timestamp}.{ext}"
+
+# 日志配置
+log:
+  log_level: "INFO"
+  log_file: null  # 如果需要保存日志文件,设置路径,如: "logs/gatekeeper.log"
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
