@@ -211,3 +211,5 @@ __marimo__/
 .cursorindexingignore
 *.mp4
 /detected_plates
+
+.kiro/
