@@ -3,7 +3,7 @@
 """
 import cv2
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from .config import Config
 from .models import LicensePlateDetector
@@ -102,6 +102,8 @@ class GatekeeperApp:
             # 打印最终统计
             self._print_final_statistics(stats)
         finally:
+            # 关闭存储管理器（等待异步写入完成）
+            self.storage.shutdown()
             # 关闭 webhook 服务
             if self.webhook_service is not None:
                 self.webhook_service.shutdown()
@@ -109,57 +111,70 @@ class GatekeeperApp:
     def _process_frame(self, frame: np.ndarray, frame_number: int) -> Optional[np.ndarray]:
         """
         处理单帧
-        
+
         Args:
             frame: 输入帧
             frame_number: 帧编号
-            
+
         Returns:
             处理后的帧(用于显示)
         """
         try:
             # 1. 检测车牌
             detections = self.detector.detect(frame)
-            
+
             # 2. 更新追踪器
             tracked_objects = self.tracker.update(detections)
-            
-            # 3. 处理追踪对象
-            self._process_tracked_objects(frame, tracked_objects)
-            
-            # 4. 绘制结果
-            display_frame = self._draw_results(frame.copy(), tracked_objects)
-            
-            # 5. 绘制统计信息
-            self._draw_statistics(display_frame)
-            
-            return display_frame
-            
+
+            # 3. 处理追踪对象，同时获取处理后的追踪信息（避免重复计算）
+            processed_tracks = self._process_tracked_objects(frame, tracked_objects)
+
+            # 4. 只在需要显示时才复制和绘制
+            if self.config.stream.display:
+                display_frame = frame.copy()
+                self._draw_results(display_frame, processed_tracks)
+                self._draw_statistics(display_frame)
+                return display_frame
+
+            return frame
+
         except Exception as e:
             self.logger.error(f"处理帧出错: {e}")
             return frame
     
-    def _process_tracked_objects(self, frame: np.ndarray, tracked_objects: np.ndarray):
+    def _process_tracked_objects(
+        self, frame: np.ndarray, tracked_objects: np.ndarray
+    ) -> List[Tuple[int, int, int, int, int, bool]]:
         """
         处理追踪对象
 
         Args:
             frame: 当前帧
             tracked_objects: 追踪对象数组
+
+        Returns:
+            处理后的追踪列表: [(x1, y1, x2, y2, track_id, is_saved), ...]
         """
+        processed_tracks = []
+
         for obj in tracked_objects:
             x1, y1, x2, y2, track_id = obj
+            # 一次性转换坐标（避免重复转换）
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             track_id = int(track_id)
 
-            # 检查是否为新追踪
-            if self.tracker.is_new_track(track_id):
+            # 一次性检查是否为新追踪（避免重复调用）
+            is_new = self.tracker.is_new_track(track_id)
+
+            # 检查是否为新追踪，需要保存
+            if is_new:
                 # 保存车牌图像
                 filepath = self.storage.save_plate(frame, x1, y1, x2, y2, track_id)
 
                 if filepath:
                     # 标记为已保存
                     self.tracker.mark_track_saved(track_id)
+                    is_new = False  # 更新状态
                     self.logger.info(
                         f"新车牌已保存! Track ID: {track_id}, "
                         f"总计: {len(self.tracker.saved_track_ids)}"
@@ -184,56 +199,54 @@ class GatekeeperApp:
                             frame,
                             (x1, y1, x2, y2)
                         )
+
+            # 存储处理后的信息: is_saved = not is_new
+            processed_tracks.append((x1, y1, x2, y2, track_id, not is_new))
+
+        return processed_tracks
     
-    def _draw_results(self, frame: np.ndarray, tracked_objects: np.ndarray) -> np.ndarray:
+    def _draw_results(
+        self, frame: np.ndarray, processed_tracks: List[Tuple[int, int, int, int, int, bool]]
+    ) -> None:
         """
-        在帧上绘制结果
-        
+        在帧上绘制结果（直接修改 frame）
+
         Args:
-            frame: 输入帧
-            tracked_objects: 追踪对象
-            
-        Returns:
-            绘制后的帧
+            frame: 输入帧（会被直接修改）
+            processed_tracks: 处理后的追踪列表 [(x1, y1, x2, y2, track_id, is_saved), ...]
         """
-        for obj in tracked_objects:
-            x1, y1, x2, y2, track_id = obj
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            track_id = int(track_id)
-            
-            # 根据是否保存选择颜色
-            if not self.tracker.is_new_track(track_id):
+        for x1, y1, x2, y2, track_id, is_saved in processed_tracks:
+            # 根据是否保存选择颜色（直接使用已计算的 is_saved）
+            if is_saved:
                 color = (0, 255, 0)  # 绿色 - 已保存
                 status = "saved"
             else:
                 color = (0, 165, 255)  # 橙色 - 追踪中
                 status = "tracking"
-            
+
             # 绘制边界框
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
+
             # 绘制标签
             label = f"ID:{track_id} [{status}]"
             cv2.putText(
                 frame, label, (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
             )
-        
-        return frame
     
-    def _draw_statistics(self, frame: np.ndarray):
+    def _draw_statistics(self, frame: np.ndarray) -> None:
         """
-        在帧上绘制统计信息
-        
+        在帧上绘制统计信息（直接修改 frame）
+
         Args:
-            frame: 输入帧
+            frame: 输入帧（会被直接修改）
         """
         # 获取统计信息
         stream_stats = self.stream_processor.get_statistics()
         detector_stats = self.detector.get_statistics()
         tracker_stats = self.tracker.get_statistics()
         storage_stats = self.storage.get_statistics()
-        
+
         # 准备统计文本
         stats_lines = [
             f"total frames: {stream_stats.get('total_frames', 0)}",
@@ -243,25 +256,19 @@ class GatekeeperApp:
             f"active tracks: {tracker_stats.get('active_tracks', 0)}",
             f"FPS: {stream_stats.get('fps', 0):.2f}"
         ]
-        
-        # 创建半透明背景
-        overlay = frame.copy()
-        h, w = frame.shape[:2]
-        
+
+        # 计算背景尺寸
         padding = 10
         line_height = 30
         bg_height = padding * 2 + len(stats_lines) * line_height
         bg_width = 380
-        
-        cv2.rectangle(
-            overlay,
-            (padding, padding),
-            (bg_width, bg_height),
-            (0, 0, 0),
-            -1
-        )
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-        
+
+        # 只复制需要半透明处理的 ROI 区域（而非整帧）
+        roi = frame[padding:bg_height, padding:bg_width].copy()
+        cv2.rectangle(roi, (0, 0), (bg_width - padding, bg_height - padding), (0, 0, 0), -1)
+        cv2.addWeighted(roi, 0.6, frame[padding:bg_height, padding:bg_width], 0.4, 0,
+                        frame[padding:bg_height, padding:bg_width])
+
         # 绘制文本
         for i, line in enumerate(stats_lines):
             y = padding + 25 + i * line_height

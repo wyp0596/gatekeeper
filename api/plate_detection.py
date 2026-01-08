@@ -4,6 +4,7 @@
 """
 import io
 import base64
+import threading
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException
 from fastapi.responses import JSONResponse
@@ -16,15 +17,19 @@ from ultralytics import YOLO
 MODEL_PATH = "license_plate_detector.pt"
 CONFIDENCE_THRESHOLD = 0.5
 
-# 全局模型实例
+# 全局模型实例（线程安全）
 _model: Optional[YOLO] = None
+_model_lock = threading.Lock()
 
 
 def get_model() -> YOLO:
-    """获取或加载模型（单例）"""
+    """获取或加载模型（线程安全单例）"""
     global _model
     if _model is None:
-        _model = YOLO(MODEL_PATH)
+        with _model_lock:
+            # 双重检查锁定
+            if _model is None:
+                _model = YOLO(MODEL_PATH)
     return _model
 
 

@@ -5,6 +5,7 @@ import io
 import cv2
 import numpy as np
 import requests
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Set, Tuple, Optional
@@ -30,6 +31,7 @@ class WebhookService:
         self.config = config
         self.executor = ThreadPoolExecutor(max_workers=3)
         self.triggered_tracks: Set[int] = set()
+        self._lock = threading.Lock()  # 保护 triggered_tracks 的线程安全
 
         self.logger.info(
             f"Webhook 服务初始化完成 - url={config.url}, "
@@ -55,10 +57,12 @@ class WebhookService:
         Returns:
             是否成功提交任务（不代表发送成功）
         """
-        if track_id in self.triggered_tracks:
-            return False
+        # 使用锁确保检查和添加的原子性
+        with self._lock:
+            if track_id in self.triggered_tracks:
+                return False
+            self.triggered_tracks.add(track_id)
 
-        self.triggered_tracks.add(track_id)
         self.logger.info(f"触发 Webhook - Track ID: {track_id}")
         self.executor.submit(
             self._send_webhook,
@@ -159,7 +163,8 @@ class WebhookService:
         Returns:
             是否已触发
         """
-        return track_id in self.triggered_tracks
+        with self._lock:
+            return track_id in self.triggered_tracks
 
     def get_statistics(self) -> dict:
         """
@@ -168,8 +173,10 @@ class WebhookService:
         Returns:
             统计信息字典
         """
+        with self._lock:
+            triggered_count = len(self.triggered_tracks)
         return {
-            'triggered_count': len(self.triggered_tracks),
+            'triggered_count': triggered_count,
             'url': self.config.url
         }
 
