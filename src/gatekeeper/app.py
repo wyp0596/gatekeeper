@@ -7,7 +7,7 @@ from typing import Optional
 
 from .config import Config
 from .models import LicensePlateDetector
-from .services import PlateTracker, StorageManager, StreamProcessor
+from .services import PlateTracker, StorageManager, StreamProcessor, WebhookService
 from .utils import setup_logger, get_logger
 
 
@@ -73,7 +73,13 @@ class GatekeeperApp:
                 display=self.config.stream.display,
                 display_window_name=self.config.stream.display_window_name
             )
-            
+
+            # Webhook 服务（可选）
+            self.webhook_service: Optional[WebhookService] = None
+            if self.config.webhook.enabled:
+                self.webhook_service = WebhookService(self.config.webhook)
+                self.logger.info("Webhook 服务已启用")
+
             self.logger.info("所有组件初始化完成")
             
         except Exception as e:
@@ -83,17 +89,22 @@ class GatekeeperApp:
     def run(self):
         """运行应用程序"""
         self.logger.info("开始运行应用程序")
-        
+
         # 打开视频流
         if not self.stream_processor.open():
             self.logger.error("无法打开视频流,程序退出")
             return
-        
-        # 处理视频流
-        stats = self.stream_processor.process(self._process_frame)
-        
-        # 打印最终统计
-        self._print_final_statistics(stats)
+
+        try:
+            # 处理视频流
+            stats = self.stream_processor.process(self._process_frame)
+
+            # 打印最终统计
+            self._print_final_statistics(stats)
+        finally:
+            # 关闭 webhook 服务
+            if self.webhook_service is not None:
+                self.webhook_service.shutdown()
     
     def _process_frame(self, frame: np.ndarray, frame_number: int) -> Optional[np.ndarray]:
         """
@@ -131,20 +142,21 @@ class GatekeeperApp:
     def _process_tracked_objects(self, frame: np.ndarray, tracked_objects: np.ndarray):
         """
         处理追踪对象
-        
+
         Args:
             frame: 当前帧
             tracked_objects: 追踪对象数组
         """
         for obj in tracked_objects:
             x1, y1, x2, y2, track_id = obj
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             track_id = int(track_id)
-            
+
             # 检查是否为新追踪
             if self.tracker.is_new_track(track_id):
                 # 保存车牌图像
                 filepath = self.storage.save_plate(frame, x1, y1, x2, y2, track_id)
-                
+
                 if filepath:
                     # 标记为已保存
                     self.tracker.mark_track_saved(track_id)
@@ -152,6 +164,26 @@ class GatekeeperApp:
                         f"新车牌已保存! Track ID: {track_id}, "
                         f"总计: {len(self.tracker.saved_track_ids)}"
                     )
+
+            # Webhook 触发逻辑：检查是否稳定
+            if self.webhook_service is not None:
+                # 检查是否已触发过
+                if not self.webhook_service.is_triggered(track_id):
+                    # 检查是否稳定
+                    if self.tracker.is_track_stable(
+                        track_id,
+                        self.config.webhook.velocity_threshold,
+                        self.config.webhook.stable_frames
+                    ):
+                        # 裁剪车牌图片
+                        plate_image = frame[y1:y2, x1:x2]
+                        # 异步触发 webhook
+                        self.webhook_service.trigger_async(
+                            track_id,
+                            plate_image,
+                            frame,
+                            (x1, y1, x2, y2)
+                        )
     
     def _draw_results(self, frame: np.ndarray, tracked_objects: np.ndarray) -> np.ndarray:
         """
@@ -268,6 +300,11 @@ class GatekeeperApp:
         storage_stats = self.storage.get_statistics()
         self.logger.info(f"已保存图像: {storage_stats['saved_count']}")
         self.logger.info(f"输出目录: {storage_stats['output_dir']}")
-        
+
+        # Webhook 统计
+        if self.webhook_service is not None:
+            webhook_stats = self.webhook_service.get_statistics()
+            self.logger.info(f"Webhook 触发次数: {webhook_stats['triggered_count']}")
+
         self.logger.info("="*60)
 

@@ -3,8 +3,9 @@
 """
 import sys
 import os
+import math
 import numpy as np
-from typing import Set
+from typing import Set, Dict, Optional
 
 # 添加sort目录到路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../../sort'))
@@ -17,37 +18,40 @@ class PlateTracker:
     """
     基于SORT算法的车牌追踪器
     """
-    
+
     def __init__(
-        self, 
+        self,
         max_age: int = 30,
         min_hits: int = 3,
         iou_threshold: float = 0.3
     ):
         """
         初始化追踪器
-        
+
         Args:
             max_age: 追踪对象未检测到时保持的最大帧数
             min_hits: 确认追踪前需要的最小检测次数
             iou_threshold: IOU匹配阈值
         """
         self.logger = get_logger(__name__)
-        
+
         # 初始化SORT追踪器
         self.tracker = Sort(
             max_age=max_age,
             min_hits=min_hits,
             iou_threshold=iou_threshold
         )
-        
+
         # 追踪历史 - 存储已保存的追踪ID
         self.saved_track_ids: Set[int] = set()
-        
+
+        # 稳定性追踪 - track_id -> 连续稳定帧数
+        self.stable_frame_counts: Dict[int, int] = {}
+
         # 统计
         self.total_tracks = 0
         self.active_tracks = 0
-        
+
         self.logger.info(
             f"追踪器初始化完成 - max_age={max_age}, "
             f"min_hits={min_hits}, iou_threshold={iou_threshold}"
@@ -120,6 +124,91 @@ class PlateTracker:
     def reset_statistics(self):
         """重置统计信息"""
         self.saved_track_ids.clear()
+        self.stable_frame_counts.clear()
         self.total_tracks = 0
         self.active_tracks = 0
+
+    def _get_kalman_tracker(self, track_id: int):
+        """
+        获取指定 track_id 对应的 KalmanBoxTracker
+
+        Args:
+            track_id: 追踪 ID (SORT 返回的 id+1)
+
+        Returns:
+            KalmanBoxTracker 对象，未找到返回 None
+        """
+        # SORT 内部 id 是从 0 开始，返回时 +1
+        # 所以 track_id=1 对应内部 id=0
+        internal_id = track_id - 1
+        for trk in self.tracker.trackers:
+            if trk.id == internal_id:
+                return trk
+        return None
+
+    def get_track_velocity(self, track_id: int) -> Optional[float]:
+        """
+        获取指定 track 的当前速度
+
+        Args:
+            track_id: 追踪 ID
+
+        Returns:
+            速度（像素/帧），未找到返回 None
+        """
+        trk = self._get_kalman_tracker(track_id)
+        if trk is None:
+            return None
+
+        # Kalman 滤波器状态: [x, y, s, r, vx, vy, vs]
+        # vx, vy 是 x, y 方向的速度
+        vx = trk.kf.x[4, 0]
+        vy = trk.kf.x[5, 0]
+        velocity = math.sqrt(vx ** 2 + vy ** 2)
+        return velocity
+
+    def update_stability(self, track_id: int, velocity_threshold: float) -> int:
+        """
+        更新指定 track 的稳定性计数
+
+        Args:
+            track_id: 追踪 ID
+            velocity_threshold: 速度阈值（像素/帧）
+
+        Returns:
+            当前连续稳定帧数
+        """
+        velocity = self.get_track_velocity(track_id)
+        if velocity is None:
+            return 0
+
+        if velocity < velocity_threshold:
+            # 速度低于阈值，增加稳定计数
+            self.stable_frame_counts[track_id] = self.stable_frame_counts.get(track_id, 0) + 1
+        else:
+            # 速度超过阈值，重置计数
+            self.stable_frame_counts[track_id] = 0
+
+        return self.stable_frame_counts[track_id]
+
+    def is_track_stable(
+        self,
+        track_id: int,
+        velocity_threshold: float,
+        stable_frames: int
+    ) -> bool:
+        """
+        判断 track 是否稳定（停稳）
+
+        Args:
+            track_id: 追踪 ID
+            velocity_threshold: 速度阈值（像素/帧）
+            stable_frames: 需要持续稳定的帧数
+
+        Returns:
+            是否稳定
+        """
+        # 更新稳定性计数并获取当前值
+        current_stable_frames = self.update_stability(track_id, velocity_threshold)
+        return current_stable_frames >= stable_frames
 

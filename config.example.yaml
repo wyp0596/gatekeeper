@@ -41,3 +41,26 @@ log:
   log_file: null  # 如果需要保存日志文件,设置路径,如: "logs/gatekeeper.log"
   log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+# Webhook 配置（可选）
+# 当车牌检测到且车辆停稳时，触发 webhook 通知
+webhook:
+  # 是否启用 webhook
+  enabled: false
+
+  # Webhook URL
+  # url: "https://your-backend.com/api/plate-detected"
+
+  # 请求超时时间（秒）
+  timeout: 30
+
+  # 失败重试次数
+  retry_count: 3
+
+  # 停稳判定 - 速度阈值（像素/帧）
+  # 当车牌移动速度低于此值时认为在减速
+  velocity_threshold: 2.0
+
+  # 停稳判定 - 连续稳定帧数
+  # 速度持续低于阈值的帧数达到此值时，判定为停稳并触发 webhook
+  stable_frames: 5
+

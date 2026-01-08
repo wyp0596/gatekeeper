@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from gatekeeper import GatekeeperApp
-from gatekeeper.config import Config, DetectionConfig, TrackingConfig, StreamConfig, StorageConfig, LogConfig
+from gatekeeper.config import Config, DetectionConfig, TrackingConfig, StreamConfig, StorageConfig, LogConfig, WebhookConfig
 
 
 def parse_arguments():
@@ -113,7 +113,44 @@ def parse_arguments():
         type=str,
         help='日志文件路径'
     )
-    
+
+    # Webhook 配置
+    webhook_group = parser.add_argument_group('Webhook 配置')
+    webhook_group.add_argument(
+        '--webhook-enabled',
+        action='store_true',
+        help='启用 Webhook 通知'
+    )
+    webhook_group.add_argument(
+        '--webhook-url',
+        type=str,
+        help='Webhook URL'
+    )
+    webhook_group.add_argument(
+        '--webhook-timeout',
+        type=int,
+        default=30,
+        help='Webhook 超时时间(秒)'
+    )
+    webhook_group.add_argument(
+        '--webhook-retry-count',
+        type=int,
+        default=3,
+        help='Webhook 重试次数'
+    )
+    webhook_group.add_argument(
+        '--webhook-velocity-threshold',
+        type=float,
+        default=2.0,
+        help='停稳判定速度阈值(像素/帧)'
+    )
+    webhook_group.add_argument(
+        '--webhook-stable-frames',
+        type=int,
+        default=5,
+        help='停稳判定所需连续稳定帧数'
+    )
+
     # 其他
     parser.add_argument(
         '--save-config',
@@ -160,9 +197,17 @@ def create_config_from_args(args) -> Config:
         log=LogConfig(
             log_level=args.log_level,
             log_file=args.log_file
+        ),
+        webhook=WebhookConfig(
+            enabled=args.webhook_enabled,
+            url=args.webhook_url,
+            timeout=args.webhook_timeout,
+            retry_count=args.webhook_retry_count,
+            velocity_threshold=args.webhook_velocity_threshold,
+            stable_frames=args.webhook_stable_frames
         )
     )
-    
+
     return config
 
 
